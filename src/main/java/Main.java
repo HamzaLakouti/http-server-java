@@ -1,6 +1,8 @@
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import model.Request;
 
 
 public class Main {
@@ -18,41 +20,49 @@ public class Main {
         serverSocket.setReuseAddress(true);
         clientSocket = serverSocket.accept();
         System.out.println("accepted new connection");
-        handleConnection(clientSocket);
+        String requestStr = parseInput(clientSocket.getInputStream());
+        System.out.println("Parsing request:\n" + requestStr);
+        var request = Request.from(requestStr);
+        var outputStream = clientSocket.getOutputStream();
+        var response = getResponse(request);
+        System.out.println("Response:\n" + response);
+        outputStream.write(response.getBytes());
+        clientSocket.close();
       }
     } catch (IOException e) {
       System.out.println("IOException: " + e.getMessage());
     }
   }
 
-  private static void handleConnection(final Socket clientSocket) {
-    String foundResponse = "HTTP/1.1 200 OK\r\n\r\n";
-    String notFoundResponse = "HTTP/1.1 404 NOT FOUND\r\n\r\n";
-    try (BufferedReader reader = new BufferedReader(
-            new InputStreamReader(clientSocket.getInputStream()));
-         OutputStream outputStream = clientSocket.getOutputStream()) {
-      String path = reader.readLine().split(" ")[1];
-      System.out.println("Requested path: " + path);
-      if (path.equals("/")) {
-        outputStream.write(foundResponse.getBytes()); }
-      else if (path.contains("/echo/")) {
-          final String response = path.split("/echo/")[1];
-          outputStream.write("HTTP/1.1 200 OK\r\n".getBytes());
-          outputStream.write("Content-Type: text/plain\r\n".getBytes());
-          outputStream.write(
-                  ("Content-Length: " + response.length() + "\r\n").getBytes());
-          outputStream.write("\r\n".getBytes());
-          outputStream.write(response.getBytes());
-      } else {
-        outputStream.write(notFoundResponse.getBytes());
-      }
-      outputStream.flush();
-    } catch (IOException e) {
-      System.err.println("exception occurred. " + e.getMessage());
+  public static String parseInput(InputStream in) throws IOException {
+    BufferedReader reader =
+            new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
+    StringBuilder requestBuilder = new StringBuilder();
+    String line;
+    while ((line = reader.readLine()) != null && !line.isEmpty()) {
+      requestBuilder.append(line).append("\r\n");
     }
+    return requestBuilder.toString();
   }
-  private static byte[] encodeOutput(String value) {
-    final String CRLF = "\r\n";
-    return String.format("%s%s%s", value, CRLF, CRLF).getBytes();
+
+  public static String getResponse(Request request) {
+    String path = request.path();
+    if (path.equals("/")) {
+      return "HTTP/1.1 200 OK\r\n\r\n";
+    } else if (path.startsWith("/echo/")) {
+      String echoValue = path.substring(6);
+      return "HTTP/1.1 200 OK\r\n" +
+              "Content-Type: text/plain\r\n" +
+              "Content-Length: " + echoValue.length() + "\r\n\r\n" +
+              echoValue + "\r\n";
+    } else if (path.startsWith("/user-agent")) {
+      String userAgent = request.headers().get("User-Agent");
+      return "HTTP/1.1 200 OK\r\n" +
+              "Content-Type: text/plain\r\n" +
+              "Content-Length: " + userAgent.length() + "\r\n\r\n" +
+              userAgent + "\r\n";
+    } else {
+      return "HTTP/1.1 404 Not Found\r\n\r\n";
+    }
   }
 }
